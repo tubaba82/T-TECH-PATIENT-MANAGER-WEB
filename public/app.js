@@ -107,14 +107,14 @@ async function renderPatients(c) {
   const patients = await api('GET', '/api/patients');
   c.innerHTML = `<div class="toolbar"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="showAddPatient()">+ Register</button><input type="text" id="patient-search" placeholder="🔍 Search..." oninput="searchPatients(this.value)" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;width:200px"></div><span style="font-size:12px;color:var(--dim)">${patients.length} patients</span></div>
   <div class="panel"><div class="panel-body" style="padding:0;overflow-x:auto"><table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Age</th><th>File</th><th>Actions</th></tr></thead><tbody id="patients-tbody">
-  ${patients.length===0?'<tr><td colspan="6"><div class="empty"><p>No patients</p></div></td></tr>':patients.map(p=>`<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong></td><td>${esc(p.phone)||'—'}</td><td>${p.age||'—'}/${esc(p.gender)||'—'}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button></td></tr>`).join('')}
+  ${patients.length===0?'<tr><td colspan="6"><div class="empty"><p>No patients</p></div></td></tr>':patients.map(p=>`<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong></td><td>${esc(p.phone)||'—'}</td><td>${p.age?p.age+'yrs':'—'}${p.gender?' · '+p.gender:''}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div></div>`;
 }
 async function searchPatients(q) {
   if (q.length < 2) { renderPatients($('#page-container')); return; }
   const patients = await api('GET', `/api/patients?search=${encodeURIComponent(q)}`);
   const tbody = $('#patients-tbody'); if (!tbody) return;
-  tbody.innerHTML = patients.map(p => `<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong></td><td>${esc(p.phone)||'—'}</td><td>${p.age||'—'}/${esc(p.gender)||'—'}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button></td></tr>`).join('');
+  tbody.innerHTML = patients.map(p => `<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong></td><td>${esc(p.phone)||'—'}</td><td>${p.age?p.age+'yrs':'—'}${p.gender?' · '+p.gender:''}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button></td></tr>`).join('');
 }
 
 function showAddPatient() {
