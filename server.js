@@ -536,6 +536,33 @@ app.get('/api/sync/status', requireAuth, (req, res) => {
   else res.json({ online: false, role: 'unknown', remoteUrl: 'Not configured', lastSync: 'Never', pendingChanges: 0 });
 });
 
+// Force push ALL local data to cloud (used after Render redeploys and loses data)
+app.post('/api/sync/push-all', requireAuth, (req, res) => {
+  if (!syncEngine || !syncEngine.remoteUrl) return res.json({ ok: false, error: 'Sync not configured' });
+  const patients = all("SELECT * FROM patients");
+  const appointments = all("SELECT * FROM appointments");
+  const prescriptions = all("SELECT * FROM prescriptions");
+  const visits = all("SELECT * FROM visits");
+  const labs = all("SELECT * FROM lab_results");
+  const users = all("SELECT id,username,password_hash,full_name,role,active,created_at FROM users");
+  const invoices = all("SELECT * FROM invoices");
+  const queue = all("SELECT * FROM queue");
+  // Build change list
+  const changes = [];
+  patients.forEach(p => changes.push({ table_name: 'patients', record_id: p.patient_id, action: 'INSERT', data: JSON.stringify(p) }));
+  appointments.forEach(a => changes.push({ table_name: 'appointments', record_id: String(a.id), action: 'INSERT', data: JSON.stringify(a) }));
+  prescriptions.forEach(r => changes.push({ table_name: 'prescriptions', record_id: String(r.id), action: 'INSERT', data: JSON.stringify(r) }));
+  visits.forEach(v => changes.push({ table_name: 'visits', record_id: String(v.id), action: 'INSERT', data: JSON.stringify(v) }));
+  labs.forEach(l => changes.push({ table_name: 'lab_results', record_id: String(l.id), action: 'INSERT', data: JSON.stringify(l) }));
+  users.forEach(u => changes.push({ table_name: 'users', record_id: u.username, action: 'INSERT', data: JSON.stringify(u) }));
+  invoices.forEach(i => changes.push({ table_name: 'invoices', record_id: i.invoice_no, action: 'INSERT', data: JSON.stringify(i) }));
+  // Push to remote
+  syncEngine.pushChanges(changes).then(result => {
+    if (result.ok) res.json({ ok: true, pushed: changes.length });
+    else res.json({ ok: false, error: 'Push failed — cloud may be down' });
+  });
+});
+
 app.get('/api/portal/lookup', (req, res) => {
   const q = (req.query.q || '').trim();
   const pin = (req.query.pin || '').trim();

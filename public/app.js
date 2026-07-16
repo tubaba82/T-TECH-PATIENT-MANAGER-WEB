@@ -241,8 +241,14 @@ async function saveUser() { await api('POST','/api/users',{username:$('#u-name')
 
 async function renderSettings(c) { 
   const syncStatus = await api('GET', '/api/sync/status');
-  c.innerHTML=`<div class="panel" style="max-width:400px"><div class="panel-header"><h3>⚙️ Settings</h3></div><div class="panel-body"><div style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:16px"><h4 style="font-size:12px;color:var(--dim);margin-bottom:8px">🔄 Sync Status</h4><div style="font-size:12px"><span class="badge ${syncStatus.online?'badge-success':'badge-danger'}">${syncStatus.online?'Online':'Offline'}</span> · Role: ${syncStatus.role} · Pending: ${syncStatus.pendingChanges}<br><span style="font-size:10px;color:var(--dim)">Last sync: ${syncStatus.lastSync||'Never'}</span></div></div><h4 style="font-size:13px;margin-bottom:10px">Change Password</h4><div class="form-group"><label>Current Password</label><input id="s-old" type="password"></div><div class="form-group"><label>New Password</label><input id="s-new" type="password"></div><button class="btn btn-primary" onclick="changePw()">Update</button></div></div>`; }
+  c.innerHTML=`<div class="panel" style="max-width:400px"><div class="panel-header"><h3>⚙️ Settings</h3></div><div class="panel-body"><div style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:16px"><h4 style="font-size:12px;color:var(--dim);margin-bottom:8px">🔄 Sync Status</h4><div style="font-size:12px"><span class="badge ${syncStatus.online?'badge-success':'badge-danger'}">${syncStatus.online?'Online':'Offline'}</span> · Role: ${syncStatus.role} · Pending: ${syncStatus.pendingChanges}<br><span style="font-size:10px;color:var(--dim)">Last sync: ${syncStatus.lastSync||'Never'}</span></div><button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="pushAllToCloud()">⬆ Push All to Cloud</button></div><h4 style="font-size:13px;margin-bottom:10px">Change Password</h4><div class="form-group"><label>Current Password</label><input id="s-old" type="password"></div><div class="form-group"><label>New Password</label><input id="s-new" type="password"></div><button class="btn btn-primary" onclick="changePw()">Update</button></div></div>`; }
 async function changePw() { const r=await api('POST','/api/change-password',{oldPassword:$('#s-old').value,newPassword:$('#s-new').value}); if(r.ok)toast('Password changed','success'); else toast(r.error,'error'); }
+async function pushAllToCloud() {
+  toast('Pushing all data to cloud...','info');
+  const r = await api('POST', '/api/sync/push-all');
+  if (r.ok) toast(`Pushed ${r.pushed} records to cloud`,'success');
+  else toast(r.error || 'Push failed','error');
+}
 
 async function renderReports(c) { c.innerHTML=`<div class="panel"><div class="panel-header"><h3>📈 Reports</h3></div><div class="panel-body"><p style="color:var(--dim)">Reports are available on the desktop version. Use the backup feature to sync data.</p></div></div>`; }
 
