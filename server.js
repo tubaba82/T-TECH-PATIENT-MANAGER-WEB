@@ -398,6 +398,41 @@ app.post('/api/templates/apply', requireDoctorOrAdmin, (req, res) => {
   res.json({ ok: true, added: drugs.length });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// PATIENT PORTAL (Public — no login required)
+// Patients access: /portal
+// ═══════════════════════════════════════════════════════════════
+app.get('/portal', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'portal.html')); });
+
+app.get('/api/portal/lookup', (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q || q.length < 3) return res.json({ ok: false, error: 'Enter your Patient ID (e.g. PT-00001) or phone number' });
+  // Find patient by ID or phone
+  const patient = get("SELECT patient_id, first_name, last_name, phone FROM patients WHERE patient_id=? OR phone=?", [q, q]);
+  if (!patient) return res.json({ ok: false, error: 'Patient not found. Please check your Patient ID or phone number and try again.' });
+  // Get upcoming appointments
+  const appointments = all("SELECT date, time, doctor, reason, status FROM appointments WHERE patient_id=? AND date >= date('now') ORDER BY date, time", [patient.patient_id]);
+  // Get recent prescriptions (last 10)
+  const prescriptions = all("SELECT drug_name, dosage, duration, quantity, price, paid, prescribed_date FROM prescriptions WHERE patient_id=? ORDER BY prescribed_date DESC LIMIT 10", [patient.patient_id]);
+  // Get recent lab results
+  const labs = all("SELECT test_name, result, status, ordered_at FROM lab_results WHERE patient_id=? ORDER BY ordered_at DESC LIMIT 10", [patient.patient_id]);
+  // Get last visit
+  const lastVisit = get("SELECT visit_date, diagnosis, doctor, notes FROM visits WHERE patient_id=? ORDER BY visit_date DESC LIMIT 1", [patient.patient_id]);
+  // Queue position (if in today's queue)
+  const today = new Date().toISOString().slice(0,10);
+  const queuePos = get("SELECT queue_number, status FROM queue WHERE patient_id=? AND added_at LIKE ? AND status IN ('waiting','in_progress')", [patient.patient_id, today+'%']);
+
+  res.json({
+    ok: true,
+    patient: { first_name: patient.first_name, last_name: patient.last_name, patient_id: patient.patient_id },
+    appointments,
+    prescriptions,
+    labs,
+    lastVisit,
+    queue: queuePos
+  });
+});
+
 // Catch-all: serve the SPA
 app.get('*', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
