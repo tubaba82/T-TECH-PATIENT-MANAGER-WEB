@@ -309,6 +309,7 @@ app.post('/api/patients', requireAuth, (req, res) => {
   run("INSERT INTO patients (patient_id,first_name,last_name,phone,age,gender,address,blood_type,allergies,emergency_contact,file_location,notes,photo,portal_pin) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [pid, p.first_name||'', p.last_name||'', p.phone||'', p.age||0, p.gender||'', p.address||'', p.blood_type||'', p.allergies||'', p.emergency_contact||'', p.file_location||'', p.notes||'', p.photo||'', p.portal_pin||'']);
   auditLog(req.session.user.username, 'patient_registered', 'patient', pid);
+  if (syncEngine) syncEngine.logChange('patients', pid, 'INSERT', { patient_id: pid, ...p });
   res.json({ ok: true, patient_id: pid });
 });
 app.put('/api/patients/:pid', requireAuth, (req, res) => {
@@ -318,6 +319,7 @@ app.put('/api/patients/:pid', requireAuth, (req, res) => {
   if (fields.length === 0) return res.json({ ok: false, error: 'No fields' });
   values.push(req.params.pid);
   run(`UPDATE patients SET ${fields.join(',')} WHERE patient_id=?`, values);
+  if (syncEngine) syncEngine.logChange('patients', req.params.pid, 'UPDATE', req.body);
   res.json({ ok: true });
 });
 app.delete('/api/patients/:pid', requireAdmin, (req, res) => {
@@ -349,6 +351,7 @@ app.post('/api/prescriptions', requireDoctorOrAdmin, (req, res) => {
   const rx = req.body;
   run('INSERT INTO prescriptions (patient_id,drug_name,dosage,duration,quantity,price,paid) VALUES (?,?,?,?,?,?,?)',
     [rx.patient_id, rx.drug_name||'', rx.dosage||'', rx.duration||'', rx.quantity||0, rx.price||0, rx.paid?1:0]);
+  if (syncEngine) syncEngine.logChange('prescriptions', rx.patient_id+':'+rx.drug_name, 'INSERT', rx);
   res.json({ ok: true });
 });
 app.put('/api/prescriptions/:id', requireDoctorOrAdmin, (req, res) => {
@@ -370,6 +373,7 @@ app.get('/api/appointments', requireAuth, (req, res) => {
 app.post('/api/appointments', requireAuth, (req, res) => {
   const a = req.body;
   run('INSERT INTO appointments (patient_id,date,time,doctor,reason,status) VALUES (?,?,?,?,?,?)', [a.patient_id, a.date, a.time||'09:00', a.doctor||'', a.reason||'', 'scheduled']);
+  if (syncEngine) syncEngine.logChange('appointments', a.patient_id+':'+a.date, 'INSERT', a);
   res.json({ ok: true });
 });
 app.put('/api/appointments/:id/done', requireAuth, (req, res) => { run("UPDATE appointments SET status='completed' WHERE id=?", [req.params.id]); res.json({ ok: true }); });
@@ -471,6 +475,43 @@ app.post('/api/templates/apply', requireDoctorOrAdmin, (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 app.get('/portal', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'portal.html')); });
 
+// ═══════════════════════════════════════════════════════════════
+// SYNC API (called by the other server instance)
+// ═══════════════════════════════════════════════════════════════
+const SYNC_KEY = process.env.SYNC_KEY || 'ajsc-sync-2026-ttech';
+
+app.post('/api/sync/push', (req, res) => {
+  if (req.body.syncKey !== SYNC_KEY) return res.status(403).json({ ok: false, error: 'Invalid sync key' });
+  const changes = req.body.changes || [];
+  const source = req.body.source || 'remote';
+  for (const change of changes) {
+    try {
+      const data = typeof change.data === 'string' ? JSON.parse(change.data) : change.data;
+      // Apply the change
+      if (syncEngine) syncEngine.applyRemoteChanges([change]);
+      // Log it as received from remote (won't be pushed back)
+      run("INSERT INTO change_log (table_name,record_id,action,data,synced,source) VALUES (?,?,?,?,1,?)",
+        [change.table_name, change.record_id, change.action, JSON.stringify(data), source]);
+    } catch(e) { /* skip bad records */ }
+  }
+  res.json({ ok: true, applied: changes.length });
+});
+
+app.get('/api/sync/pull', (req, res) => {
+  if (req.query.syncKey !== SYNC_KEY) return res.status(403).json({ ok: false, error: 'Invalid sync key' });
+  const since = req.query.since || '2000-01-01';
+  // Return changes made HERE (by this server's role) since the given time
+  const myRole = process.env.SYNC_ROLE || 'cloud';
+  const changes = all("SELECT * FROM change_log WHERE source=? AND changed_at>? ORDER BY changed_at ASC LIMIT 200",
+    [myRole, since]);
+  res.json({ ok: true, changes });
+});
+
+app.get('/api/sync/status', requireAuth, (req, res) => {
+  if (syncEngine) res.json(syncEngine.getStatus());
+  else res.json({ online: false, role: 'unknown', remoteUrl: 'Not configured', lastSync: 'Never', pendingChanges: 0 });
+});
+
 app.get('/api/portal/lookup', (req, res) => {
   const q = (req.query.q || '').trim();
   const pin = (req.query.pin || '').trim();
@@ -512,17 +553,33 @@ app.get('*', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'index.
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════════════════════
+const SyncEngine = require('./sync');
+let syncEngine = null;
+
 initDB().then(() => {
+  // Initialize sync engine
+  const syncRole = process.env.SYNC_ROLE || 'cloud';
+  const syncRemote = process.env.SYNC_REMOTE_URL || '';
+  syncEngine = new SyncEngine(db, run, get, all, {
+    remoteUrl: syncRemote,
+    syncKey: process.env.SYNC_KEY || 'ajsc-sync-2026-ttech',
+    role: syncRole,
+    syncInterval: 30000
+  });
+  syncEngine.init();
+  if (syncRemote) syncEngine.start();
+
   app.listen(PORT, '0.0.0.0', () => {
     const nets = require('os').networkInterfaces();
     let localIP = '127.0.0.1';
     for (const name of Object.keys(nets)) { for (const net of nets[name]) { if (net.family === 'IPv4' && !net.internal) localIP = net.address; } }
     console.log(`\n  ╔══════════════════════════════════════════════════════╗`);
-    console.log(`  ║  Allahu Jallah Spiritual Clinic — Web App v1.1.0    ║`);
+    console.log(`  ║  Allahu Jallah Spiritual Clinic — Web App v1.2.0    ║`);
     console.log(`  ╠══════════════════════════════════════════════════════╣`);
     console.log(`  ║  Local:   http://localhost:${PORT}                   ║`);
     console.log(`  ║  Network: http://${localIP}:${PORT}              ║`);
     console.log(`  ║  Login:   admin / admin                             ║`);
+    console.log(`  ║  Sync:    ${syncRemote ? 'ENABLED → ' + syncRemote.slice(0,30) : 'DISABLED (set SYNC_REMOTE_URL)'}  ║`);
     console.log(`  ╚══════════════════════════════════════════════════════╝\n`);
   });
 });
