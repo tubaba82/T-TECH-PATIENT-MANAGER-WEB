@@ -507,6 +507,20 @@ app.get('/api/sync/pull', (req, res) => {
   res.json({ ok: true, changes });
 });
 
+// Full data dump for initial sync (first time local connects)
+app.get('/api/sync/full', (req, res) => {
+  if (req.query.syncKey !== SYNC_KEY) return res.status(403).json({ ok: false, error: 'Invalid sync key' });
+  const patients = all("SELECT * FROM patients");
+  const appointments = all("SELECT * FROM appointments");
+  const prescriptions = all("SELECT * FROM prescriptions");
+  const visits = all("SELECT * FROM visits");
+  const labs = all("SELECT * FROM lab_results");
+  const users = all("SELECT id,username,password_hash,full_name,role,active,created_at FROM users");
+  const queue = all("SELECT * FROM queue");
+  const invoices = all("SELECT * FROM invoices");
+  res.json({ ok: true, data: { patients, appointments, prescriptions, visits, labs, users, queue, invoices } });
+});
+
 app.get('/api/sync/status', requireAuth, (req, res) => {
   if (syncEngine) res.json(syncEngine.getStatus());
   else res.json({ online: false, role: 'unknown', remoteUrl: 'Not configured', lastSync: 'Never', pendingChanges: 0 });

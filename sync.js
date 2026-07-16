@@ -57,10 +57,68 @@ class SyncEngine {
       console.log('[SYNC] No remote URL configured — sync disabled');
       return;
     }
-    this.timer = setInterval(() => this.doSync(), this.syncInterval);
-    // First sync after 5 seconds
-    setTimeout(() => this.doSync(), 5000);
-    console.log(`[SYNC] Started (every ${this.syncInterval / 1000}s)`);
+    // Check if this is first run (no data locally) — do a full sync
+    this.initialSync().then(() => {
+      this.timer = setInterval(() => this.doSync(), this.syncInterval);
+      // First incremental sync after 10 seconds
+      setTimeout(() => this.doSync(), 10000);
+      console.log(`[SYNC] Started (every ${this.syncInterval / 1000}s)`);
+    });
+  }
+
+  async initialSync() {
+    // Only do full sync if local DB is empty (first time setup)
+    const patientCount = this.get("SELECT COUNT(*) as c FROM patients");
+    if (patientCount && patientCount.c > 0) return; // already has data
+    console.log('[SYNC] First run detected — pulling full data from cloud...');
+    try {
+      const result = await this.fetchFullData();
+      if (result.ok && result.data) {
+        const d = result.data;
+        // Import all data
+        if (d.users) d.users.forEach(u => {
+          const exists = this.get("SELECT id FROM users WHERE username=?", [u.username]);
+          if (!exists) this.run("INSERT INTO users (username,password_hash,full_name,role,active,created_at) VALUES (?,?,?,?,?,?)", [u.username, u.password_hash, u.full_name||'', u.role||'receptionist', u.active||1, u.created_at||'']);
+        });
+        if (d.patients) d.patients.forEach(p => {
+          const exists = this.get("SELECT id FROM patients WHERE patient_id=?", [p.patient_id]);
+          if (!exists) this.run("INSERT INTO patients (patient_id,first_name,last_name,phone,age,gender,address,blood_type,allergies,emergency_contact,file_location,notes,photo,portal_pin,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [p.patient_id, p.first_name||'', p.last_name||'', p.phone||'', p.age||0, p.gender||'', p.address||'', p.blood_type||'', p.allergies||'', p.emergency_contact||'', p.file_location||'', p.notes||'', p.photo||'', p.portal_pin||'', p.registered_at||'']);
+        });
+        if (d.appointments) d.appointments.forEach(a => {
+          this.run("INSERT INTO appointments (patient_id,date,time,doctor,reason,status,created_at) VALUES (?,?,?,?,?,?,?)", [a.patient_id, a.date, a.time||'', a.doctor||'', a.reason||'', a.status||'scheduled', a.created_at||'']);
+        });
+        if (d.prescriptions) d.prescriptions.forEach(r => {
+          this.run("INSERT INTO prescriptions (patient_id,drug_name,dosage,duration,quantity,price,paid,prescribed_date) VALUES (?,?,?,?,?,?,?,?)", [r.patient_id, r.drug_name||'', r.dosage||'', r.duration||'', r.quantity||0, r.price||0, r.paid||0, r.prescribed_date||'']);
+        });
+        if (d.visits) d.visits.forEach(v => {
+          this.run("INSERT INTO visits (patient_id,visit_date,diagnosis,doctor,notes) VALUES (?,?,?,?,?)", [v.patient_id, v.visit_date||'', v.diagnosis||'', v.doctor||'', v.notes||'']);
+        });
+        if (d.labs) d.labs.forEach(l => {
+          this.run("INSERT INTO lab_results (patient_id,test_name,test_category,result,reference_range,unit,status,ordered_by,ordered_at) VALUES (?,?,?,?,?,?,?,?,?)", [l.patient_id, l.test_name||'', l.test_category||'', l.result||'', l.reference_range||'', l.unit||'', l.status||'pending', l.ordered_by||'', l.ordered_at||'']);
+        });
+        console.log(`[SYNC] Full sync complete: ${d.patients?d.patients.length:0} patients, ${d.appointments?d.appointments.length:0} appointments`);
+      }
+    } catch(e) {
+      console.log('[SYNC] Full sync failed (will retry on next start):', e.message);
+    }
+  }
+
+  async fetchFullData() {
+    return new Promise((resolve) => {
+      try {
+        const url = new URL(this.remoteUrl + `/api/sync/full?syncKey=${encodeURIComponent(this.syncKey)}`);
+        const opts = { hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80), path: url.pathname + url.search, method: 'GET', timeout: 30000 };
+        const req = (url.protocol === 'https:' ? require('https') : require('http')).request(opts, (res) => {
+          let body = '';
+          res.on('data', c => body += c);
+          res.on('end', () => { try { resolve(JSON.parse(body)); } catch(e) { resolve({ ok: false }); } });
+        });
+        req.on('error', () => resolve({ ok: false }));
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false }); });
+        req.end();
+      } catch(e) { resolve({ ok: false }); }
+    });
   }
 
   stop() {
