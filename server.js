@@ -191,9 +191,11 @@ function auditLog(user, action, entity = '', entityId = '', details = '') {
 
 function createTables() {
   db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, full_name TEXT DEFAULT '', role TEXT DEFAULT 'receptionist', active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
-  db.run(`CREATE TABLE IF NOT EXISTS patients (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT UNIQUE NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', phone TEXT DEFAULT '', age INTEGER DEFAULT 0, gender TEXT DEFAULT '', address TEXT DEFAULT '', blood_type TEXT DEFAULT '', allergies TEXT DEFAULT '', emergency_contact TEXT DEFAULT '', file_location TEXT DEFAULT '', notes TEXT DEFAULT '', photo TEXT DEFAULT '', portal_pin TEXT DEFAULT '', registered_at TEXT DEFAULT (datetime('now')))`);
+  db.run(`CREATE TABLE IF NOT EXISTS patients (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT UNIQUE NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', phone TEXT DEFAULT '', age INTEGER DEFAULT 0, gender TEXT DEFAULT '', address TEXT DEFAULT '', blood_type TEXT DEFAULT '', allergies TEXT DEFAULT '', emergency_contact TEXT DEFAULT '', file_location TEXT DEFAULT '', notes TEXT DEFAULT '', photo TEXT DEFAULT '', portal_pin TEXT DEFAULT '', active INTEGER DEFAULT 1, registered_at TEXT DEFAULT (datetime('now')))`);
   // Migration: add portal_pin column if missing (for existing databases)
-  try { db.run("ALTER TABLE patients ADD COLUMN portal_pin TEXT DEFAULT ''"); } catch(e) {}  db.run(`CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_date TEXT DEFAULT (datetime('now')), diagnosis TEXT DEFAULT '', doctor TEXT DEFAULT '', notes TEXT DEFAULT '', next_appointment TEXT DEFAULT '', next_appointment_time TEXT DEFAULT '09:00', status TEXT DEFAULT 'completed')`);
+  try { db.run("ALTER TABLE patients ADD COLUMN portal_pin TEXT DEFAULT ''"); } catch(e) {}
+  // Migration: add active column if missing
+  try { db.run("ALTER TABLE patients ADD COLUMN active INTEGER DEFAULT 1"); } catch(e) {}  db.run(`CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_date TEXT DEFAULT (datetime('now')), diagnosis TEXT DEFAULT '', doctor TEXT DEFAULT '', notes TEXT DEFAULT '', next_appointment TEXT DEFAULT '', next_appointment_time TEXT DEFAULT '09:00', status TEXT DEFAULT 'completed')`);
   db.run(`CREATE TABLE IF NOT EXISTS prescriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_id INTEGER, drug_name TEXT NOT NULL DEFAULT '', dosage TEXT DEFAULT '', duration TEXT DEFAULT '', quantity INTEGER DEFAULT 0, price REAL DEFAULT 0, paid INTEGER DEFAULT 0, prescribed_date TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS appointments (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, date TEXT NOT NULL, time TEXT DEFAULT '09:00', doctor TEXT DEFAULT '', reason TEXT DEFAULT '', status TEXT DEFAULT 'scheduled', reminder_sent INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_no TEXT UNIQUE NOT NULL, patient_id TEXT NOT NULL, items TEXT DEFAULT '[]', subtotal REAL DEFAULT 0, discount REAL DEFAULT 0, total REAL DEFAULT 0, amount_paid REAL DEFAULT 0, status TEXT DEFAULT 'unpaid', created_by TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')))`);
@@ -301,8 +303,10 @@ app.delete('/api/users/:id', requireAdmin, (req, res) => { run("UPDATE users SET
 // Patients
 app.get('/api/patients', requireAuth, (req, res) => {
   const q = req.query.search;
-  if (q && q.length >= 2) { const s = `%${q}%`; return res.json(all('SELECT * FROM patients WHERE first_name LIKE ? OR last_name LIKE ? OR patient_id LIKE ? OR phone LIKE ? ORDER BY last_name LIMIT 100', [s,s,s,s])); }
-  res.json(all('SELECT * FROM patients ORDER BY registered_at DESC LIMIT 200'));
+  const showInactive = req.query.inactive === '1';
+  const activeFilter = showInactive ? '' : 'AND active=1';
+  if (q && q.length >= 2) { const s = `%${q}%`; return res.json(all(`SELECT * FROM patients WHERE (first_name LIKE ? OR last_name LIKE ? OR patient_id LIKE ? OR phone LIKE ?) ${activeFilter} ORDER BY last_name LIMIT 100`, [s,s,s,s])); }
+  res.json(all(`SELECT * FROM patients WHERE 1=1 ${activeFilter} ORDER BY registered_at DESC LIMIT 200`));
 });
 app.get('/api/patients/:pid', requireAuth, (req, res) => { res.json(get('SELECT * FROM patients WHERE patient_id=?', [req.params.pid])); });
 app.post('/api/patients', requireAuth, (req, res) => {
@@ -325,13 +329,17 @@ app.put('/api/patients/:pid', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 app.delete('/api/patients/:pid', requireAdmin, (req, res) => {
+  // Deactivate (soft delete) — data preserved, patient hidden from active list
   const pid = req.params.pid;
-  run('DELETE FROM patients WHERE patient_id=?', [pid]);
-  run('DELETE FROM visits WHERE patient_id=?', [pid]);
-  run('DELETE FROM prescriptions WHERE patient_id=?', [pid]);
-  run('DELETE FROM appointments WHERE patient_id=?', [pid]);
-  run('DELETE FROM lab_results WHERE patient_id=?', [pid]);
-  auditLog(req.session.user.username, 'patient_deleted', 'patient', pid);
+  run("UPDATE patients SET active=0 WHERE patient_id=?", [pid]);
+  auditLog(req.session.user.username, 'patient_deactivated', 'patient', pid);
+  if (syncEngine) syncEngine.logChange('patients', pid, 'UPDATE', { active: 0 });
+  res.json({ ok: true });
+});
+app.put('/api/patients/:pid/reactivate', requireAdmin, (req, res) => {
+  run("UPDATE patients SET active=1 WHERE patient_id=?", [req.params.pid]);
+  auditLog(req.session.user.username, 'patient_reactivated', 'patient', req.params.pid);
+  if (syncEngine) syncEngine.logChange('patients', req.params.pid, 'UPDATE', { active: 1 });
   res.json({ ok: true });
 });
 

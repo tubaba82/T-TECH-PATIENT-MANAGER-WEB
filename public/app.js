@@ -105,10 +105,20 @@ async function renderDashboard(c) {
 // ═══════════ PATIENTS ═══════════
 async function renderPatients(c) {
   const patients = await api('GET', '/api/patients');
-  c.innerHTML = `<div class="toolbar"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="showAddPatient()">+ Register</button><input type="text" id="patient-search" placeholder="🔍 Search..." oninput="searchPatients(this.value)" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;width:200px"></div><span style="font-size:12px;color:var(--dim)">${patients.length} patients</span></div>
+  c.innerHTML = `<div class="toolbar"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="showAddPatient()">+ Register</button><input type="text" id="patient-search" placeholder="🔍 Search..." oninput="searchPatients(this.value)" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;width:200px"><label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="show-inactive" onchange="toggleInactive(this.checked)"> Show Inactive</label></div><span style="font-size:12px;color:var(--dim)">${patients.length} patients</span></div>
   <div class="panel"><div class="panel-body" style="padding:0;overflow-x:auto"><table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Age</th><th>File</th><th>Actions</th></tr></thead><tbody id="patients-tbody">
-  ${patients.length===0?'<tr><td colspan="6"><div class="empty"><p>No patients</p></div></td></tr>':patients.map(p=>`<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong></td><td>${esc(p.phone)||'—'}</td><td>${p.age?p.age+'yrs':'—'}${p.gender?' · '+p.gender:''}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button></td></tr>`).join('')}
+  ${patients.length===0?'<tr><td colspan="6"><div class="empty"><p>No patients</p></div></td></tr>':patients.map(p=>`<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer${p.active===0?';opacity:0.5':''}"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong>${p.active===0?' <span class="badge badge-danger">Inactive</span>':''}</td><td>${esc(p.phone)||'—'}</td><td>${p.age?p.age+'yrs':'—'}${p.gender?' · '+p.gender:''}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button>${p.active===0?`<button class="btn btn-sm btn-success" onclick="event.stopPropagation();reactivatePatient('${esc(p.patient_id)}')">Activate</button>`:''}</td></tr>`).join('')}
   </tbody></table></div></div>`;
+}
+async function toggleInactive(show) {
+  const patients = await api('GET', `/api/patients?inactive=${show?'1':'0'}`);
+  const tbody = $('#patients-tbody'); if (!tbody) return;
+  tbody.innerHTML = patients.map(p=>`<tr onclick="openPatient('${esc(p.patient_id)}')" style="cursor:pointer${p.active===0?';opacity:0.5':''}"><td><span class="badge badge-info">${esc(p.patient_id)}</span></td><td><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong>${p.active===0?' <span class="badge badge-danger">Inactive</span>':''}</td><td>${esc(p.phone)||'—'}</td><td>${p.age?p.age+'yrs':'—'}${p.gender?' · '+p.gender:''}</td><td>${esc(p.file_location)||'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPatient('${esc(p.patient_id)}')">Edit</button>${p.active===0?`<button class="btn btn-sm btn-success" onclick="event.stopPropagation();reactivatePatient('${esc(p.patient_id)}')">Activate</button>`:''}</td></tr>`).join('');
+}
+async function reactivatePatient(pid) {
+  await api('PUT', `/api/patients/${pid}/reactivate`);
+  toast('Patient reactivated', 'success');
+  renderPage('patients');
 }
 async function searchPatients(q) {
   if (q.length < 2) { renderPatients($('#page-container')); return; }
@@ -138,11 +148,16 @@ async function openPatient(pid) {
 async function editPatient(pid) {
   const p = await api('GET', `/api/patients/${pid}`);
   if (!p) return;
-  showModal('Edit Patient', `<div class="form-row"><div class="form-group"><label>First Name</label><input id="p-fname" value="${esc(p.first_name||'')}"></div><div class="form-group"><label>Last Name</label><input id="p-lname" value="${esc(p.last_name||'')}"></div></div><div class="form-row"><div class="form-group"><label>Phone</label><input id="p-phone" value="${esc(p.phone||'')}"></div><div class="form-group"><label>Age</label><input id="p-age" type="number" value="${p.age||''}"></div></div><div class="form-group"><label>File Location</label><input id="p-file" value="${esc(p.file_location||'')}"></div><div class="form-group"><label>Allergies</label><input id="p-allergies" value="${esc(p.allergies||'')}"></div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveEditPatient('${esc(pid)}')">Save</button>`);
+  showModal('Edit Patient', `<div class="form-row"><div class="form-group"><label>First Name</label><input id="p-fname" value="${esc(p.first_name||'')}"></div><div class="form-group"><label>Last Name</label><input id="p-lname" value="${esc(p.last_name||'')}"></div></div><div class="form-row"><div class="form-group"><label>Phone</label><input id="p-phone" value="${esc(p.phone||'')}"></div><div class="form-group"><label>Age</label><input id="p-age" type="number" value="${p.age||''}"></div></div><div class="form-group"><label>File Location</label><input id="p-file" value="${esc(p.file_location||'')}"></div><div class="form-group"><label>Allergies</label><input id="p-allergies" value="${esc(p.allergies||'')}"></div><div class="form-group"><label>Portal PIN</label><input id="p-pin" value="${esc(p.portal_pin||'')}" maxlength="4" placeholder="1234"></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-danger" onclick="deactivatePatient('${esc(pid)}')">Deactivate</button><button class="btn btn-primary" onclick="saveEditPatient('${esc(pid)}')">Save</button>`);
+}
+async function deactivatePatient(pid) {
+  if (!confirm('Deactivate this patient? They will be hidden from the active list but records are preserved.')) return;
+  await api('DELETE', `/api/patients/${pid}`);
+  closeModal(); toast('Patient deactivated', 'success'); renderPage('patients');
 }
 async function saveEditPatient(pid) {
-  const p = { first_name:$('#p-fname').value.trim(), last_name:$('#p-lname').value.trim(), phone:$('#p-phone').value.trim(), age:parseInt($('#p-age').value)||0, file_location:$('#p-file').value.trim(), allergies:$('#p-allergies').value.trim() };
+  const p = { first_name:$('#p-fname').value.trim(), last_name:$('#p-lname').value.trim(), phone:$('#p-phone').value.trim(), age:parseInt($('#p-age').value)||0, file_location:$('#p-file').value.trim(), allergies:$('#p-allergies').value.trim(), portal_pin:$('#p-pin').value.trim() };
   await api('PUT', `/api/patients/${pid}`, p); closeModal(); toast('Updated','success'); renderPage('patients');
 }
 
