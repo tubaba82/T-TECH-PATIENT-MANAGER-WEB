@@ -192,7 +192,8 @@ function auditLog(user, action, entity = '', entityId = '', details = '') {
 function createTables() {
   db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, full_name TEXT DEFAULT '', role TEXT DEFAULT 'receptionist', active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS patients (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT UNIQUE NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', phone TEXT DEFAULT '', age INTEGER DEFAULT 0, gender TEXT DEFAULT '', address TEXT DEFAULT '', blood_type TEXT DEFAULT '', allergies TEXT DEFAULT '', emergency_contact TEXT DEFAULT '', file_location TEXT DEFAULT '', notes TEXT DEFAULT '', photo TEXT DEFAULT '', portal_pin TEXT DEFAULT '', registered_at TEXT DEFAULT (datetime('now')))`);
-  db.run(`CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_date TEXT DEFAULT (datetime('now')), diagnosis TEXT DEFAULT '', doctor TEXT DEFAULT '', notes TEXT DEFAULT '', next_appointment TEXT DEFAULT '', next_appointment_time TEXT DEFAULT '09:00', status TEXT DEFAULT 'completed')`);
+  // Migration: add portal_pin column if missing (for existing databases)
+  try { db.run("ALTER TABLE patients ADD COLUMN portal_pin TEXT DEFAULT ''"); } catch(e) {}  db.run(`CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_date TEXT DEFAULT (datetime('now')), diagnosis TEXT DEFAULT '', doctor TEXT DEFAULT '', notes TEXT DEFAULT '', next_appointment TEXT DEFAULT '', next_appointment_time TEXT DEFAULT '09:00', status TEXT DEFAULT 'completed')`);
   db.run(`CREATE TABLE IF NOT EXISTS prescriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_id INTEGER, drug_name TEXT NOT NULL DEFAULT '', dosage TEXT DEFAULT '', duration TEXT DEFAULT '', quantity INTEGER DEFAULT 0, price REAL DEFAULT 0, paid INTEGER DEFAULT 0, prescribed_date TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS appointments (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, date TEXT NOT NULL, time TEXT DEFAULT '09:00', doctor TEXT DEFAULT '', reason TEXT DEFAULT '', status TEXT DEFAULT 'scheduled', reminder_sent INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_no TEXT UNIQUE NOT NULL, patient_id TEXT NOT NULL, items TEXT DEFAULT '[]', subtotal REAL DEFAULT 0, discount REAL DEFAULT 0, total REAL DEFAULT 0, amount_paid REAL DEFAULT 0, status TEXT DEFAULT 'unpaid', created_by TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')))`);
@@ -310,6 +311,7 @@ app.post('/api/patients', requireAuth, (req, res) => {
     [pid, p.first_name||'', p.last_name||'', p.phone||'', p.age||0, p.gender||'', p.address||'', p.blood_type||'', p.allergies||'', p.emergency_contact||'', p.file_location||'', p.notes||'', p.photo||'', p.portal_pin||'']);
   auditLog(req.session.user.username, 'patient_registered', 'patient', pid);
   if (syncEngine) syncEngine.logChange('patients', pid, 'INSERT', { patient_id: pid, ...p });
+  _dirty = true; saveDB(); // Force immediate save
   res.json({ ok: true, patient_id: pid });
 });
 app.put('/api/patients/:pid', requireAuth, (req, res) => {
