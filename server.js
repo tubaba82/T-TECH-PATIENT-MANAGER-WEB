@@ -1,7 +1,8 @@
 /**
- * Allahu Jallah Spiritual Clinic — Web App v1.1.0
+ * Allahu Jallah Spiritual Clinic — Web App v1.2.0
  * Node.js/Express backend with SQLite (sql.js)
  * Access from any device on the local network via browser.
+ * Security: bcrypt passwords, rate limiting, patient PIN verification
  *
  * © T-Tech Solutions 2026
  */
@@ -18,6 +19,44 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_CLOUD = !!process.env.RENDER || !!process.env.RAILWAY_ENVIRONMENT || !!process.env.DYNO;
 
+// ═══════════════════════════════════════════════════════════════
+// RATE LIMITING (brute-force protection)
+// ═══════════════════════════════════════════════════════════════
+const loginAttempts = new Map(); // IP -> { count, lastAttempt, lockedUntil }
+const RATE_LIMIT_MAX = 5;       // max attempts before lockout
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 min lockout
+
+function checkRateLimit(ip) {
+  const record = loginAttempts.get(ip);
+  if (!record) return { allowed: true };
+  if (record.lockedUntil && Date.now() < record.lockedUntil) {
+    const remaining = Math.ceil((record.lockedUntil - Date.now()) / 1000);
+    return { allowed: false, remaining };
+  }
+  // Reset if window expired
+  if (Date.now() - record.lastAttempt > RATE_LIMIT_WINDOW) {
+    loginAttempts.delete(ip);
+    return { allowed: true };
+  }
+  if (record.count >= RATE_LIMIT_MAX) {
+    record.lockedUntil = Date.now() + RATE_LIMIT_WINDOW;
+    return { allowed: false, remaining: Math.ceil(RATE_LIMIT_WINDOW / 1000) };
+  }
+  return { allowed: true };
+}
+
+function recordFailedLogin(ip) {
+  const record = loginAttempts.get(ip) || { count: 0, lastAttempt: 0, lockedUntil: 0 };
+  record.count++;
+  record.lastAttempt = Date.now();
+  if (record.count >= RATE_LIMIT_MAX) {
+    record.lockedUntil = Date.now() + RATE_LIMIT_WINDOW;
+  }
+  loginAttempts.set(ip, record);
+}
+
+function clearFailedLogin(ip) { loginAttempts.delete(ip); }
+
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -32,7 +71,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     maxAge: 8 * 60 * 60 * 1000, // 8 hours
-    secure: false, // Set to true only if you add SSL certificate
+    secure: false,
     httpOnly: true
   }
 }));
@@ -114,7 +153,21 @@ function all(sql, p = []) {
 }
 
 function hashPassword(pw) {
-  return crypto.createHash('sha256').update(pw).digest('hex');
+  // scrypt-based hash with random salt (secure, built-in, no extra dependency)
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(pw, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(stored, pw) {
+  // Support both new scrypt format (salt:hash) and legacy SHA-256
+  if (stored.includes(':')) {
+    const [salt, hash] = stored.split(':');
+    const test = crypto.scryptSync(pw, salt, 64).toString('hex');
+    return test === hash;
+  }
+  // Legacy: plain SHA-256 (auto-migrates on next login)
+  return stored === crypto.createHash('sha256').update(pw).digest('hex');
 }
 
 function generatePatientId() {
@@ -138,7 +191,7 @@ function auditLog(user, action, entity = '', entityId = '', details = '') {
 
 function createTables() {
   db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, full_name TEXT DEFAULT '', role TEXT DEFAULT 'receptionist', active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
-  db.run(`CREATE TABLE IF NOT EXISTS patients (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT UNIQUE NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', phone TEXT DEFAULT '', age INTEGER DEFAULT 0, gender TEXT DEFAULT '', address TEXT DEFAULT '', blood_type TEXT DEFAULT '', allergies TEXT DEFAULT '', emergency_contact TEXT DEFAULT '', file_location TEXT DEFAULT '', notes TEXT DEFAULT '', photo TEXT DEFAULT '', registered_at TEXT DEFAULT (datetime('now')))`);
+  db.run(`CREATE TABLE IF NOT EXISTS patients (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT UNIQUE NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', phone TEXT DEFAULT '', age INTEGER DEFAULT 0, gender TEXT DEFAULT '', address TEXT DEFAULT '', blood_type TEXT DEFAULT '', allergies TEXT DEFAULT '', emergency_contact TEXT DEFAULT '', file_location TEXT DEFAULT '', notes TEXT DEFAULT '', photo TEXT DEFAULT '', portal_pin TEXT DEFAULT '', registered_at TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_date TEXT DEFAULT (datetime('now')), diagnosis TEXT DEFAULT '', doctor TEXT DEFAULT '', notes TEXT DEFAULT '', next_appointment TEXT DEFAULT '', next_appointment_time TEXT DEFAULT '09:00', status TEXT DEFAULT 'completed')`);
   db.run(`CREATE TABLE IF NOT EXISTS prescriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_id INTEGER, drug_name TEXT NOT NULL DEFAULT '', dosage TEXT DEFAULT '', duration TEXT DEFAULT '', quantity INTEGER DEFAULT 0, price REAL DEFAULT 0, paid INTEGER DEFAULT 0, prescribed_date TEXT DEFAULT (datetime('now')))`);
   db.run(`CREATE TABLE IF NOT EXISTS appointments (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, date TEXT NOT NULL, time TEXT DEFAULT '09:00', doctor TEXT DEFAULT '', reason TEXT DEFAULT '', status TEXT DEFAULT 'scheduled', reminder_sent INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))`);
@@ -190,11 +243,23 @@ function requireDoctorOrAdmin(req, res, next) {
 
 // Auth
 app.post('/api/login', (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const limit = checkRateLimit(ip);
+  if (!limit.allowed) return res.json({ ok: false, error: `Too many attempts. Try again in ${limit.remaining} seconds.` });
+
   const { username, password } = req.body;
   if (!username || !password) return res.json({ ok: false, error: 'Username and password required' });
   const user = get("SELECT * FROM users WHERE username=? AND active=1", [username]);
-  if (!user) return res.json({ ok: false, error: 'Invalid username' });
-  if (user.password_hash !== hashPassword(password)) return res.json({ ok: false, error: 'Invalid password' });
+  if (!user) { recordFailedLogin(ip); return res.json({ ok: false, error: 'Invalid username or password' }); }
+  if (!verifyPassword(user.password_hash, password)) { recordFailedLogin(ip); return res.json({ ok: false, error: 'Invalid username or password' }); }
+
+  // Auto-migrate legacy SHA-256 hash to scrypt on successful login
+  if (!user.password_hash.includes(':')) {
+    const newHash = hashPassword(password);
+    run("UPDATE users SET password_hash=? WHERE id=?", [newHash, user.id]);
+  }
+
+  clearFailedLogin(ip);
   req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role };
   auditLog(username, 'login', 'user', username);
   res.json({ ok: true, user: req.session.user });
@@ -209,8 +274,10 @@ app.get('/api/me', (req, res) => {
 });
 app.post('/api/change-password', requireAuth, (req, res) => {
   const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) return res.json({ ok: false, error: 'Both fields required' });
+  if (newPassword.length < 4) return res.json({ ok: false, error: 'Password must be at least 4 characters' });
   const user = get("SELECT * FROM users WHERE id=?", [req.session.user.id]);
-  if (user.password_hash !== hashPassword(oldPassword)) return res.json({ ok: false, error: 'Current password incorrect' });
+  if (!verifyPassword(user.password_hash, oldPassword)) return res.json({ ok: false, error: 'Current password incorrect' });
   run("UPDATE users SET password_hash=? WHERE id=?", [hashPassword(newPassword), req.session.user.id]);
   res.json({ ok: true });
 });
@@ -239,13 +306,13 @@ app.get('/api/patients', requireAuth, (req, res) => {
 app.get('/api/patients/:pid', requireAuth, (req, res) => { res.json(get('SELECT * FROM patients WHERE patient_id=?', [req.params.pid])); });
 app.post('/api/patients', requireAuth, (req, res) => {
   const p = req.body; const pid = generatePatientId();
-  run("INSERT INTO patients (patient_id,first_name,last_name,phone,age,gender,address,blood_type,allergies,emergency_contact,file_location,notes,photo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    [pid, p.first_name||'', p.last_name||'', p.phone||'', p.age||0, p.gender||'', p.address||'', p.blood_type||'', p.allergies||'', p.emergency_contact||'', p.file_location||'', p.notes||'', p.photo||'']);
+  run("INSERT INTO patients (patient_id,first_name,last_name,phone,age,gender,address,blood_type,allergies,emergency_contact,file_location,notes,photo,portal_pin) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    [pid, p.first_name||'', p.last_name||'', p.phone||'', p.age||0, p.gender||'', p.address||'', p.blood_type||'', p.allergies||'', p.emergency_contact||'', p.file_location||'', p.notes||'', p.photo||'', p.portal_pin||'']);
   auditLog(req.session.user.username, 'patient_registered', 'patient', pid);
   res.json({ ok: true, patient_id: pid });
 });
 app.put('/api/patients/:pid', requireAuth, (req, res) => {
-  const allowed = ['first_name','last_name','phone','age','gender','address','blood_type','allergies','emergency_contact','file_location','notes','photo'];
+  const allowed = ['first_name','last_name','phone','age','gender','address','blood_type','allergies','emergency_contact','file_location','notes','photo','portal_pin'];
   const fields = [], values = [];
   for (const [k,v] of Object.entries(req.body)) { if (allowed.includes(k)) { fields.push(`${k}=?`); values.push(v); } }
   if (fields.length === 0) return res.json({ ok: false, error: 'No fields' });
@@ -406,10 +473,16 @@ app.get('/portal', (req, res) => { res.sendFile(path.join(__dirname, 'public', '
 
 app.get('/api/portal/lookup', (req, res) => {
   const q = (req.query.q || '').trim();
+  const pin = (req.query.pin || '').trim();
   if (!q || q.length < 3) return res.json({ ok: false, error: 'Enter your Patient ID (e.g. PT-00001) or phone number' });
   // Find patient by ID or phone
-  const patient = get("SELECT patient_id, first_name, last_name, phone FROM patients WHERE patient_id=? OR phone=?", [q, q]);
+  const patient = get("SELECT patient_id, first_name, last_name, phone, portal_pin FROM patients WHERE patient_id=? OR phone=?", [q, q]);
   if (!patient) return res.json({ ok: false, error: 'Patient not found. Please check your Patient ID or phone number and try again.' });
+  // Verify PIN (if patient has one set)
+  if (patient.portal_pin && patient.portal_pin.length > 0) {
+    if (!pin) return res.json({ ok: false, needPin: true, error: 'Enter your 4-digit portal PIN' });
+    if (pin !== patient.portal_pin) return res.json({ ok: false, error: 'Incorrect PIN. Please try again.' });
+  }
   // Get upcoming appointments
   const appointments = all("SELECT date, time, doctor, reason, status FROM appointments WHERE patient_id=? AND date >= date('now') ORDER BY date, time", [patient.patient_id]);
   // Get recent prescriptions (last 10)

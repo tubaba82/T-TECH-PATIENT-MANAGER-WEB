@@ -62,6 +62,10 @@
         <label>Enter Your Patient ID or Phone Number</label>
         <input id="search-input" placeholder="PT-00001 or 08012345678" autocomplete="off">
       </div>
+      <div class="form-group" id="pin-group" style="display:none">
+        <label>Your 4-Digit Portal PIN</label>
+        <input id="pin-input" placeholder="••••" maxlength="4" type="password" inputmode="numeric" style="text-align:center;font-size:20px;letter-spacing:8px">
+      </div>
       <button class="btn" onclick="lookup()">Check My Records</button>
       <p style="text-align:center;margin-top:12px;font-size:11px;color:#7b8fa3">
         Your Patient ID is on your clinic card. Ask reception if unsure.
@@ -98,10 +102,20 @@
   async function lookup() {
     const q = document.getElementById('search-input').value.trim();
     if (!q) { alert('Enter your Patient ID or phone number'); return; }
+    const pin = document.getElementById('pin-input').value.trim();
     try {
-      const r = await fetch(`/api/portal/lookup?q=${encodeURIComponent(q)}`);
+      const r = await fetch(`/api/portal/lookup?q=${encodeURIComponent(q)}&pin=${encodeURIComponent(pin)}`);
       const d = await r.json();
-      if (!d.ok) { showError(d.error); return; }
+      if (!d.ok) {
+        if (d.needPin) {
+          // Show PIN field
+          document.getElementById('pin-group').style.display = 'block';
+          document.getElementById('pin-input').focus();
+          return;
+        }
+        showError(d.error);
+        return;
+      }
       _data = d;
       showResults(d);
     } catch(e) { showError('Connection error. Please try again.'); }
