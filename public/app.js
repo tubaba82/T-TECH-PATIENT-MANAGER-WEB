@@ -235,9 +235,25 @@ async function saveLabResult(id) { await api('PUT',`/api/lab/${id}`,{result:$('#
 // ═══════════ AUDIT, USERS, SETTINGS, REPORTS ═══════════
 async function renderAudit(c) { const logs=await api('GET','/api/audit'); c.innerHTML=`<h3 style="margin-bottom:16px">📋 Audit Log</h3><div class="panel"><div class="panel-body" style="padding:0;overflow-x:auto"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>${logs.map(l=>`<tr><td style="font-size:10px">${l.timestamp||''}</td><td>${esc(l.user)}</td><td><span class="badge badge-info">${esc(l.action)}</span></td><td>${esc(l.entity)} ${esc(l.entity_id)}</td><td style="font-size:11px;color:var(--dim)">${esc(l.details)}</td></tr>`).join('')}</tbody></table></div></div>`; }
 
-async function renderUsers(c) { const users=await api('GET','/api/users'); c.innerHTML=`<div class="toolbar"><h3>👥 Users</h3><button class="btn btn-primary" onclick="showAddUser()">+ Add</button></div><div class="panel"><div class="panel-body" style="padding:0;overflow-x:auto"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th></tr></thead><tbody>${users.map(u=>`<tr><td><strong>${esc(u.username)}</strong></td><td>${esc(u.full_name)}</td><td><span class="badge badge-info">${u.role}</span></td><td>${u.active?'<span class="badge badge-success">Active</span>':'<span class="badge badge-danger">Inactive</span>'}</td></tr>`).join('')}</tbody></table></div></div>`; }
+async function renderUsers(c) { const users=await api('GET','/api/users'); c.innerHTML=`<div class="toolbar"><h3>👥 Users</h3><button class="btn btn-primary" onclick="showAddUser()">+ Add</button></div><div class="panel"><div class="panel-body" style="padding:0;overflow-x:auto"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>${users.map(u=>`<tr><td><strong>${esc(u.username)}</strong></td><td>${esc(u.full_name)}</td><td><span class="badge badge-info">${u.role}</span></td><td>${u.active?'<span class="badge badge-success">Active</span>':'<span class="badge badge-danger">Inactive</span>'}</td><td>${u.username!=='admin'?`<button class="btn btn-ghost btn-sm" onclick="editUser(${u.id},'${esc(u.username)}','${esc(u.full_name)}','${esc(u.role)}')">Edit</button><button class="btn btn-sm btn-danger" onclick="deactivateUser(${u.id})">🚫</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`; }
 function showAddUser() { showModal('Add User', `<div class="form-group"><label>Username</label><input id="u-name"></div><div class="form-group"><label>Full Name</label><input id="u-full"></div><div class="form-group"><label>Password</label><input id="u-pass" type="password" value="pass123"></div><div class="form-group"><label>Role</label><select id="u-role"><option value="receptionist">Receptionist</option><option value="doctor">Doctor</option><option value="admin">Admin</option></select></div>`, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveUser()">Create</button>`); }
 async function saveUser() { await api('POST','/api/users',{username:$('#u-name').value.trim(),full_name:$('#u-full').value.trim(),password:$('#u-pass').value,role:$('#u-role').value}); closeModal(); toast('User created','success'); renderPage('users'); }
+function editUser(id, username, fullName, role) {
+  showModal('Edit User', `<div class="form-group"><label>Username</label><input value="${esc(username)}" disabled></div><div class="form-group"><label>Full Name</label><input id="ue-full" value="${esc(fullName)}"></div><div class="form-group"><label>New Password (blank to keep)</label><input id="ue-pass" type="password"></div><div class="form-group"><label>Role</label><select id="ue-role"><option value="receptionist" ${role==='receptionist'?'selected':''}>Receptionist</option><option value="doctor" ${role==='doctor'?'selected':''}>Doctor</option><option value="admin" ${role==='admin'?'selected':''}>Admin</option></select></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveEditUser(${id})">Save</button>`);
+}
+async function saveEditUser(id) {
+  const data = { full_name: $('#ue-full').value.trim(), role: $('#ue-role').value };
+  const pw = $('#ue-pass').value;
+  if (pw) data.password = pw;
+  await api('PUT', `/api/users/${id}`, data);
+  closeModal(); toast('User updated', 'success'); renderPage('users');
+}
+async function deactivateUser(id) {
+  if (!confirm('Deactivate this user?')) return;
+  await api('DELETE', `/api/users/${id}`);
+  toast('User deactivated', 'success'); renderPage('users');
+}
 
 async function renderSettings(c) { 
   const syncStatus = await api('GET', '/api/sync/status');

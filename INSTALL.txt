@@ -1,0 +1,31 @@
+═══════════════════════════════════════════════════════
+  ALLAHU JALLAH SPIRITUAL CLINIC — Installation Guide
+═══════════════════════════════════════════════════════
+
+STEP 1: Install Node.js (one time only)
+————————————————————————————
+  Download from: https://nodejs.org
+  Install the LTS version (click Next, Next, Finish)
+
+STEP 2: Install app dependencies (one time only)
+————————————————————————————
+  Double-click "install.bat" in this folder
+
+STEP 3: Create Desktop Shortcut
+————————————————————————————
+  Right-click "Allahu Jallah Clinic.vbs" → Send to → Desktop (create shortcut)
+  
+  Now you have a one-click icon on the desktop!
+
+DAILY USE:
+————————————————————————————
+  Double-click the desktop shortcut → browser opens automatically
+  The app runs in the background — no black window visible
+  
+  To stop: Open Task Manager → find "node.exe" → End Task
+  (Or just restart the PC — it stops automatically)
+
+LOGIN: admin / admin
+URL: http://localhost:3000
+
+═══════════════════════════════════════════════════════
