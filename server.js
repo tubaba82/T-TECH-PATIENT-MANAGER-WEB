@@ -205,6 +205,10 @@ function createTables() {
   db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
   db.run(`CREATE TABLE IF NOT EXISTS rx_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL DEFAULT '', description TEXT DEFAULT '', drugs TEXT DEFAULT '[]', created_at TEXT DEFAULT (datetime('now')))`);
 
+  // Doctor Consultation Notes
+  db.run(`CREATE TABLE IF NOT EXISTS consultations (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT NOT NULL, visit_date TEXT DEFAULT (datetime('now')), chief_complaint TEXT DEFAULT '', examination TEXT DEFAULT '', diagnosis TEXT DEFAULT '', treatment_plan TEXT DEFAULT '', doctor_notes TEXT DEFAULT '', doctor TEXT DEFAULT '', follow_up_date TEXT DEFAULT '', vitals TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')))`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_consultations_patient ON consultations(patient_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_consultations_date ON consultations(visit_date)`);
   // Indexes
   db.run(`CREATE INDEX IF NOT EXISTS idx_patients_pid ON patients(patient_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date)`);
@@ -604,7 +608,45 @@ app.get('*', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'index.
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════════════════════
-const SyncEngine = require('./sync');
+// CONSULTATIONS (Doctor Visit Notes)
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/consultations/:patientId', requireAuth, (req, res) => {
+  const rows = all("SELECT * FROM consultations WHERE patient_id=? ORDER BY visit_date DESC", [req.params.patientId]);
+  res.json(rows);
+});
+
+app.post('/api/consultations', requireAuth, (req, res) => {
+  const c = req.body;
+  if (!c.patient_id) return res.status(400).json({ error: 'patient_id required' });
+  run(`INSERT INTO consultations (patient_id, visit_date, chief_complaint, examination, diagnosis, treatment_plan, doctor_notes, doctor, follow_up_date, vitals) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [c.patient_id, c.visit_date || new Date().toISOString().slice(0,10), c.chief_complaint||'', c.examination||'', c.diagnosis||'', c.treatment_plan||'', c.doctor_notes||'', c.doctor || req.session?.user?.full_name || '', c.follow_up_date||'', c.vitals||'']);
+  audit(req, 'add_consultation', 'Consultation', c.patient_id, `Dr: ${c.doctor||''}, Dx: ${c.diagnosis||''}`);
+  res.json({ ok: true });
+});
+
+app.put('/api/consultations/:id', requireAuth, (req, res) => {
+  const c = req.body;
+  run(`UPDATE consultations SET chief_complaint=?, examination=?, diagnosis=?, treatment_plan=?, doctor_notes=?, doctor=?, follow_up_date=?, vitals=? WHERE id=?`,
+    [c.chief_complaint||'', c.examination||'', c.diagnosis||'', c.treatment_plan||'', c.doctor_notes||'', c.doctor||'', c.follow_up_date||'', c.vitals||'', req.params.id]);
+  res.json({ ok: true });
+});
+
+app.delete('/api/consultations/:id', requireAuth, (req, res) => {
+  run("DELETE FROM consultations WHERE id=?", [req.params.id]);
+  res.json({ ok: true });
+});
+
+// Print consultation summary
+app.get('/api/consultations/:id/print', requireAuth, (req, res) => {
+  const c = get("SELECT * FROM consultations WHERE id=?", [req.params.id]);
+  if (!c) return res.status(404).json({ error: 'Not found' });
+  const patient = get("SELECT * FROM patients WHERE patient_id=?", [c.patient_id]);
+  res.json({ consultation: c, patient });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SYNC ENGINE
+// ═══════════════════════════════════════════════════════════════
 let syncEngine = null;
 
 initDB().then(() => {

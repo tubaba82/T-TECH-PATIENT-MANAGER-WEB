@@ -1,0 +1,22 @@
+No — the shortcut contains a hardcoded path to YOUR PC (C:\Users\t4k4l\...). It won't work on the client's PC because their username and folder structure are different.
+
+For the client's PC, you have two options:
+
+Option 1: Client uses the cloud version only (easiest) Just give them the Render URL as a bookmark:
+
+https://t-tech-patient-manager-web.onrender.com
+No installation needed. Works on any PC/phone with a browser.
+
+Option 2: Client runs local server on their own PC You'd need to:
+
+Copy the entire T-TECH-PATIENT-MANAGER-WEB folder to their PC
+Install Node.js on their PC
+Run install.bat
+Edit the VBS file to match THEIR folder path
+Create a shortcut for them
+But Option 2 only makes sense if the client IS the clinic (running the server at reception). For the doctor/owner accessing from home — just use the Render URL. No software needed on their device.
+
+Summary:
+
+Clinic reception PC → runs the local server (your current setup)
+Everyone else (doctor, owner, staff from home) → uses the Render URL in their browser

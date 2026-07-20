@@ -9,7 +9,7 @@ const fs = require('fs');
 
 const PORT = 3000;
 const URL = `http://localhost:${PORT}`;
-const LOCK_FILE = path.join(__dirname, 'data', '.running');
+const LOCK_FILE = path.join(process.env.APPDATA || __dirname, 'Allahu-Jallah-Clinic', '.running');
 
 // Prevent multiple launches
 if (fs.existsSync(LOCK_FILE)) {
@@ -30,9 +30,21 @@ if (fs.existsSync(LOCK_FILE)) {
 }
 
 function startApp() {
-  // Create data dir if needed
-  const dataDir = path.join(__dirname, 'data');
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  // Create data dir if needed (use AppData if Program Files is read-only)
+  let dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+  // If we can't write to the app directory, use AppData instead
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    // Test write permission
+    const testFile = path.join(dataDir, '.write-test');
+    fs.writeFileSync(testFile, 'test');
+    fs.unlinkSync(testFile);
+  } catch(e) {
+    // Fall back to AppData (always writable)
+    dataDir = path.join(process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'), 'Allahu-Jallah-Clinic');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    process.env.DATA_DIR = dataDir;
+  }
 
   // Write lock file
   fs.writeFileSync(LOCK_FILE, String(process.pid));

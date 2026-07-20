@@ -142,8 +142,9 @@ async function openPatient(pid) {
   const p = await api('GET', `/api/patients/${pid}`);
   if (!p) return;
   const visits = await api('GET', `/api/visits/${pid}`);
-  showModal(`${esc(p.first_name)} ${esc(p.last_name)}`, `<div style="margin-bottom:12px"><span class="badge badge-info">${esc(pid)}</span> <span class="badge badge-purple">📁 ${esc(p.file_location)||'—'}</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:12px"><div><strong>Phone:</strong> ${esc(p.phone)||'—'}</div><div><strong>Age:</strong> ${p.age||'—'} / ${esc(p.gender)||'—'}</div><div><strong>Blood:</strong> ${esc(p.blood_type)||'—'}</div><div><strong>Allergies:</strong> ${esc(p.allergies)||'None'}</div></div><h4 style="font-size:12px;color:var(--dim)">Recent Visits (${visits.length})</h4>${visits.slice(0,3).map(v=>`<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">${v.visit_date?v.visit_date.split(' ')[0]:''} — ${esc(v.diagnosis)||'—'}</div>`).join('')||'<p style="color:var(--dim);font-size:11px">No visits</p>'}`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="closeModal();addVisitFor('${esc(pid)}')">+ Visit</button><button class="btn btn-success" onclick="closeModal();addRxFor('${esc(pid)}')">+ Rx</button><button class="btn btn-secondary" onclick="closeModal();addApptFor('${esc(pid)}')">+ Appt</button><button class="btn btn-secondary" onclick="closeModal();addToQueue('${esc(pid)}')">🪑</button>`);
+  const consults = await api('GET', `/api/consultations/${pid}`);
+  showModal(`${esc(p.first_name)} ${esc(p.last_name)}`, `<div style="margin-bottom:12px"><span class="badge badge-info">${esc(pid)}</span> <span class="badge badge-purple">📁 ${esc(p.file_location)||'—'}</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:12px"><div><strong>Phone:</strong> ${esc(p.phone)||'—'}</div><div><strong>Age:</strong> ${p.age||'—'} / ${esc(p.gender)||'—'}</div><div><strong>Blood:</strong> ${esc(p.blood_type)||'—'}</div><div><strong>Allergies:</strong> ${esc(p.allergies)||'None'}</div></div><h4 style="font-size:12px;color:var(--dim);margin-bottom:4px">Doctor Consultations (${consults.length})</h4>${consults.slice(0,5).map(c=>`<div style="font-size:11px;padding:6px 0;border-bottom:1px solid var(--border)"><strong>${c.visit_date?c.visit_date.split(' ')[0]:''}</strong> — ${esc(c.diagnosis)||'No diagnosis'} <span style="color:var(--dim)">by ${esc(c.doctor)||'—'}</span>${c.chief_complaint?'<br><span style="color:var(--dim)">CC: '+esc(c.chief_complaint)+'</span>':''}</div>`).join('')||'<p style="color:var(--dim);font-size:11px">No consultations yet</p>'}<h4 style="font-size:12px;color:var(--dim);margin-top:10px">Recent Visits (${visits.length})</h4>${visits.slice(0,3).map(v=>`<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">${v.visit_date?v.visit_date.split(' ')[0]:''} — ${esc(v.diagnosis)||'—'}</div>`).join('')||'<p style="color:var(--dim);font-size:11px">No visits</p>'}`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="closeModal();addConsultation('${esc(pid)}')">📋 Consultation</button><button class="btn btn-secondary" onclick="closeModal();addVisitFor('${esc(pid)}')">+ Visit</button><button class="btn btn-success" onclick="closeModal();addRxFor('${esc(pid)}')">+ Rx</button><button class="btn btn-secondary" onclick="closeModal();addApptFor('${esc(pid)}')">+ Appt</button><button class="btn btn-secondary" onclick="closeModal();addToQueue('${esc(pid)}')">🪑</button>`);
 }
 async function editPatient(pid) {
   const p = await api('GET', `/api/patients/${pid}`);
@@ -162,6 +163,85 @@ async function saveEditPatient(pid) {
 }
 
 // ═══════════ VISITS, RX, APPOINTMENTS (modals) ═══════════
+function addConsultation(pid) {
+  const today = new Date().toISOString().slice(0,10);
+  showModal('📋 Doctor Consultation', `
+    <div class="form-group"><label>Date</label><input id="con-date" type="date" value="${today}"></div>
+    <div class="form-group"><label>Chief Complaint</label><textarea id="con-complaint" rows="2" placeholder="What brought the patient in today?"></textarea></div>
+    <div class="form-group"><label>Vitals (BP, Temp, Pulse, Weight)</label><input id="con-vitals" placeholder="e.g. BP:120/80, Temp:36.8, Pulse:72, Wt:68kg"></div>
+    <div class="form-group"><label>Examination Findings</label><textarea id="con-exam" rows="2" placeholder="Physical examination results..."></textarea></div>
+    <div class="form-group"><label>Diagnosis</label><textarea id="con-diag" rows="2" placeholder="Doctor's diagnosis..."></textarea></div>
+    <div class="form-group"><label>Treatment Plan</label><textarea id="con-treat" rows="2" placeholder="Medications, procedures, advice given..."></textarea></div>
+    <div class="form-group"><label>Doctor's Notes</label><textarea id="con-notes" rows="2" placeholder="Additional notes..."></textarea></div>
+    <div class="form-row"><div class="form-group"><label>Doctor</label><input id="con-doc" placeholder="Dr. Name"></div><div class="form-group"><label>Follow-up Date</label><input id="con-followup" type="date"></div></div>
+  `, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveConsultation('${esc(pid)}')">💾 Save Consultation</button>`);
+}
+
+async function saveConsultation(pid) {
+  const data = {
+    patient_id: pid,
+    visit_date: $('#con-date').value,
+    chief_complaint: $('#con-complaint').value.trim(),
+    vitals: $('#con-vitals').value.trim(),
+    examination: $('#con-exam').value.trim(),
+    diagnosis: $('#con-diag').value.trim(),
+    treatment_plan: $('#con-treat').value.trim(),
+    doctor_notes: $('#con-notes').value.trim(),
+    doctor: $('#con-doc').value.trim(),
+    follow_up_date: $('#con-followup').value
+  };
+  if (!data.chief_complaint && !data.diagnosis) { toast('Enter at least complaint or diagnosis', 'error'); return; }
+  const r = await api('POST', '/api/consultations', data);
+  if (r.ok) { closeModal(); toast('Consultation saved', 'success'); }
+  else toast(r.error || 'Failed', 'error');
+}
+
+async function viewConsultations(pid) {
+  const consults = await api('GET', `/api/consultations/${pid}`);
+  const p = await api('GET', `/api/patients/${pid}`);
+  const body = consults.length === 0 ? '<div class="empty"><p>No consultations recorded</p></div>' :
+    consults.map(c => `<div style="padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px"><strong>${c.visit_date?c.visit_date.split(' ')[0]:''}</strong><span style="font-size:11px;color:var(--dim)">Dr. ${esc(c.doctor)||'—'}</span></div>
+      ${c.chief_complaint?'<div style="font-size:11px;margin-bottom:4px"><strong>Complaint:</strong> '+esc(c.chief_complaint)+'</div>':''}
+      ${c.vitals?'<div style="font-size:11px;margin-bottom:4px"><strong>Vitals:</strong> '+esc(c.vitals)+'</div>':''}
+      ${c.examination?'<div style="font-size:11px;margin-bottom:4px"><strong>Exam:</strong> '+esc(c.examination)+'</div>':''}
+      ${c.diagnosis?'<div style="font-size:11px;margin-bottom:4px"><strong>Diagnosis:</strong> '+esc(c.diagnosis)+'</div>':''}
+      ${c.treatment_plan?'<div style="font-size:11px;margin-bottom:4px"><strong>Treatment:</strong> '+esc(c.treatment_plan)+'</div>':''}
+      ${c.doctor_notes?'<div style="font-size:11px;margin-bottom:4px"><strong>Notes:</strong> '+esc(c.doctor_notes)+'</div>':''}
+      ${c.follow_up_date?'<div style="font-size:11px;color:var(--primary)"><strong>Follow-up:</strong> '+c.follow_up_date+'</div>':''}
+      <div style="margin-top:6px"><button class="btn btn-sm" onclick="printConsultation(${c.id})">🖨 Print</button> <button class="btn btn-sm btn-danger" onclick="deleteConsultation(${c.id},'${esc(pid)}')">✕</button></div>
+    </div>`).join('');
+  showModal(`📋 Consultations — ${esc(p?.first_name||'')} ${esc(p?.last_name||'')}`, `<div style="max-height:400px;overflow-y:auto">${body}</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="closeModal();addConsultation('${esc(pid)}')">+ New Consultation</button>`);
+}
+
+async function deleteConsultation(id, pid) {
+  if (!confirm('Delete this consultation record?')) return;
+  await api('DELETE', `/api/consultations/${id}`);
+  toast('Deleted', 'success');
+  viewConsultations(pid);
+}
+
+async function printConsultation(id) {
+  const r = await api('GET', `/api/consultations/${id}/print`);
+  if (!r || !r.consultation) return;
+  const c = r.consultation, p = r.patient;
+  const printWin = window.open('', '_blank', 'width=700,height=900');
+  printWin.document.write(`<html><head><title>Consultation Summary</title><style>body{font-family:'Segoe UI',sans-serif;padding:30px;max-width:650px;margin:auto}h1{font-size:18px;text-align:center;margin-bottom:4px}h2{font-size:14px;text-align:center;color:#666;margin-bottom:20px}.field{margin-bottom:10px;font-size:13px}.field strong{display:inline-block;width:120px;color:#333}.header{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:16px}.patient-info{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:16px;padding:10px;background:#f5f5f5;border-radius:6px}.section{margin-top:14px;padding-top:10px;border-top:1px solid #ddd}.footer{margin-top:30px;font-size:11px;color:#999;text-align:center;border-top:1px solid #ddd;padding-top:10px}@media print{button{display:none}}</style></head><body>
+    <div class="header"><h1>Allahu Jallah Spiritual Clinic</h1><h2>Consultation Summary</h2></div>
+    <div class="patient-info"><div><strong>Patient:</strong> ${p?.first_name||''} ${p?.last_name||''}</div><div><strong>ID:</strong> ${p?.patient_id||''}</div><div><strong>Age/Gender:</strong> ${p?.age||'—'} / ${p?.gender||'—'}</div><div><strong>Date:</strong> ${c.visit_date?c.visit_date.split(' ')[0]:''}</div><div><strong>Doctor:</strong> ${c.doctor||'—'}</div><div><strong>Allergies:</strong> ${p?.allergies||'None'}</div></div>
+    ${c.chief_complaint?'<div class="field"><strong>Chief Complaint:</strong> '+c.chief_complaint+'</div>':''}
+    ${c.vitals?'<div class="field"><strong>Vitals:</strong> '+c.vitals+'</div>':''}
+    ${c.examination?'<div class="section"><div class="field"><strong>Examination:</strong> '+c.examination+'</div></div>':''}
+    ${c.diagnosis?'<div class="section"><div class="field"><strong>Diagnosis:</strong> '+c.diagnosis+'</div></div>':''}
+    ${c.treatment_plan?'<div class="section"><div class="field"><strong>Treatment Plan:</strong> '+c.treatment_plan+'</div></div>':''}
+    ${c.doctor_notes?'<div class="section"><div class="field"><strong>Notes:</strong> '+c.doctor_notes+'</div></div>':''}
+    ${c.follow_up_date?'<div class="section"><div class="field"><strong>Follow-up Date:</strong> '+c.follow_up_date+'</div></div>':''}
+    <div class="footer"><p>Powered by T-Tech Solutions — DCS Security Systems</p></div>
+    <button onclick="window.print()" style="margin-top:16px;padding:8px 20px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨 Print</button>
+  </body></html>`);
+}
+
 function addVisitFor(pid) { showModal('Add Visit', `<div class="form-group"><label>Diagnosis</label><textarea id="v-diag" rows="3"></textarea></div><div class="form-group"><label>Doctor</label><input id="v-doc"></div><div class="form-group"><label>Notes</label><textarea id="v-notes" rows="2"></textarea></div>`, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveVisit('${esc(pid)}')">Save</button>`); }
 async function saveVisit(pid) { await api('POST', '/api/visits', { patient_id:pid, diagnosis:$('#v-diag').value.trim(), doctor:$('#v-doc').value.trim(), notes:$('#v-notes').value.trim() }); closeModal(); toast('Visit recorded','success'); }
 
