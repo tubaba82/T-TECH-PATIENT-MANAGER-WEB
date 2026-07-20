@@ -60,6 +60,17 @@ function clearFailedLogin(ip) { loginAttempts.delete(ip); }
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Disable caching for JS/HTML files (ensures clients always get latest code)
+app.use((req, res, next) => {
+  if (req.path.endsWith('.js') || req.path.endsWith('.html') || req.path === '/') {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Trust proxy for HTTPS on cloud (Render, Railway use reverse proxy)
@@ -621,6 +632,7 @@ app.post('/api/consultations', requireAuth, (req, res) => {
   run(`INSERT INTO consultations (patient_id, visit_date, chief_complaint, examination, diagnosis, treatment_plan, doctor_notes, doctor, follow_up_date, vitals) VALUES (?,?,?,?,?,?,?,?,?,?)`,
     [c.patient_id, c.visit_date || new Date().toISOString().slice(0,10), c.chief_complaint||'', c.examination||'', c.diagnosis||'', c.treatment_plan||'', c.doctor_notes||'', c.doctor || req.session?.user?.full_name || '', c.follow_up_date||'', c.vitals||'']);
   audit(req, 'add_consultation', 'Consultation', c.patient_id, `Dr: ${c.doctor||''}, Dx: ${c.diagnosis||''}`);
+  if (syncEngine) syncEngine.logChange('consultations', c.patient_id+':'+(c.visit_date||''), 'INSERT', c);
   res.json({ ok: true });
 });
 
@@ -628,10 +640,12 @@ app.put('/api/consultations/:id', requireAuth, (req, res) => {
   const c = req.body;
   run(`UPDATE consultations SET chief_complaint=?, examination=?, diagnosis=?, treatment_plan=?, doctor_notes=?, doctor=?, follow_up_date=?, vitals=? WHERE id=?`,
     [c.chief_complaint||'', c.examination||'', c.diagnosis||'', c.treatment_plan||'', c.doctor_notes||'', c.doctor||'', c.follow_up_date||'', c.vitals||'', req.params.id]);
+  if (syncEngine) syncEngine.logChange('consultations', req.params.id, 'UPDATE', c);
   res.json({ ok: true });
 });
 
 app.delete('/api/consultations/:id', requireAuth, (req, res) => {
+  if (syncEngine) syncEngine.logChange('consultations', req.params.id, 'DELETE', {});
   run("DELETE FROM consultations WHERE id=?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -647,6 +661,7 @@ app.get('/api/consultations/:id/print', requireAuth, (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // SYNC ENGINE
 // ═══════════════════════════════════════════════════════════════
+const SyncEngine = require('./sync');
 let syncEngine = null;
 
 initDB().then(() => {
